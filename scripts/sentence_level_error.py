@@ -397,30 +397,36 @@ class DataQualityChecker:
                 )
 
                 # Check cross-attention patterns
-                if hasattr(outputs, 'cross_attentions') and outputs.cross_attentions:
-                    cross_attn = outputs.cross_attentions[0][0].mean(dim=1)  # Average over heads
+                # Note: cross_attentions may be None with some attention mechanisms (e.g., SDPA)
+                if (hasattr(outputs, 'cross_attentions') and outputs.cross_attentions 
+                    and outputs.cross_attentions[0] is not None):
+                    try:
+                        cross_attn = outputs.cross_attentions[0][0].mean(dim=1)  # Average over heads
 
-                    # Calculate attention entropy (uniform = high entropy = poor alignment)
-                    attn_probs = cross_attn.mean(dim=0).cpu().numpy()
-                    attn_probs = attn_probs / (attn_probs.sum() + 1e-9)
-                    entropy = -np.sum(attn_probs * np.log(attn_probs + 1e-9))
-                    max_entropy = np.log(len(attn_probs))
-                    normalized_entropy = entropy / max_entropy
+                        # Calculate attention entropy (uniform = high entropy = poor alignment)
+                        attn_probs = cross_attn.mean(dim=0).cpu().numpy()
+                        attn_probs = attn_probs / (attn_probs.sum() + 1e-9)
+                        entropy = -np.sum(attn_probs * np.log(attn_probs + 1e-9))
+                        max_entropy = np.log(len(attn_probs))
+                        normalized_entropy = entropy / max_entropy
 
-                    if normalized_entropy > 0.8:  # Very uniform attention
-                        errors.append(ErrorReport(
-                            error_type="semantic_drift",
-                            confidence=normalized_entropy,
-                            evidence={
-                                "source": source,
-                                "target": target,
-                                "attention_entropy": float(normalized_entropy),
-                                "interpretation": "Cross-attention is very scattered"
-                            },
-                            example_id=example_id,
-                            details="Translation pair may have semantic misalignment",
-                            recommendations="Verify source and target convey same meaning"
-                        ))
+                        if normalized_entropy > 0.8:  # Very uniform attention
+                            errors.append(ErrorReport(
+                                error_type="semantic_drift",
+                                confidence=normalized_entropy,
+                                evidence={
+                                    "source": source,
+                                    "target": target,
+                                    "attention_entropy": float(normalized_entropy),
+                                    "interpretation": "Cross-attention is very scattered"
+                                },
+                                example_id=example_id,
+                                details="Translation pair may have semantic misalignment",
+                                recommendations="Verify source and target convey same meaning"
+                            ))
+                    except (AttributeError, IndexError, TypeError):
+                        # Cross-attentions not available with current attention mechanism
+                        pass
 
         return errors
 
@@ -461,31 +467,37 @@ class DataQualityChecker:
                         output_attentions=True
                     )
 
-                    if hasattr(outputs, 'cross_attentions') and outputs.cross_attentions:
-                        # Check if attention follows diagonal pattern (word-for-word)
-                        cross_attn = outputs.cross_attentions[0][0].mean(dim=1)
-                        attn_matrix = cross_attn.cpu().numpy()
+                    # Note: cross_attentions may be None with some attention mechanisms (e.g., SDPA)
+                    if (hasattr(outputs, 'cross_attentions') and outputs.cross_attentions 
+                        and outputs.cross_attentions[0] is not None):
+                        try:
+                            # Check if attention follows diagonal pattern (word-for-word)
+                            cross_attn = outputs.cross_attentions[0][0].mean(dim=1)
+                            attn_matrix = cross_attn.cpu().numpy()
 
-                        # Calculate diagonal dominance
-                        min_dim = min(attn_matrix.shape)
-                        diagonal_sum = sum(attn_matrix[i, i] for i in range(min_dim))
-                        total_sum = attn_matrix.sum()
-                        diagonal_ratio = diagonal_sum / (total_sum + 1e-9)
+                            # Calculate diagonal dominance
+                            min_dim = min(attn_matrix.shape)
+                            diagonal_sum = sum(attn_matrix[i, i] for i in range(min_dim))
+                            total_sum = attn_matrix.sum()
+                            diagonal_ratio = diagonal_sum / (total_sum + 1e-9)
 
-                        if diagonal_ratio > 0.4:  # Strong diagonal pattern
-                            errors.append(ErrorReport(
-                                error_type="translationese",
-                                confidence=diagonal_ratio,
-                                evidence={
-                                    "source": source,
-                                    "target": target,
-                                    "length_ratio": length_ratio,
-                                    "diagonal_ratio": float(diagonal_ratio)
-                                },
-                                example_id=example_id,
-                                details="Translation follows source word order too rigidly",
-                                recommendations="Check if target language sounds natural"
-                            ))
+                            if diagonal_ratio > 0.4:  # Strong diagonal pattern
+                                errors.append(ErrorReport(
+                                    error_type="translationese",
+                                    confidence=diagonal_ratio,
+                                    evidence={
+                                        "source": source,
+                                        "target": target,
+                                        "length_ratio": length_ratio,
+                                        "diagonal_ratio": float(diagonal_ratio)
+                                    },
+                                    example_id=example_id,
+                                    details="Translation follows source word order too rigidly",
+                                    recommendations="Check if target language sounds natural"
+                                ))
+                        except (AttributeError, IndexError, TypeError):
+                            # Cross-attentions not available with current attention mechanism
+                            pass
 
         return errors
 
